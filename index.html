@@ -34,6 +34,11 @@ kbd{padding:2px 7px;border-radius:6px;background:#26375d;border:1px solid #fffff
 h1{margin:0;font-size:clamp(42px,6vw,68px);line-height:.9;letter-spacing:-.055em}
 .sub{margin:11px 0 18px;color:#aebde0;line-height:1.45;font-size:14px}
 .modes{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.difficultyBox{margin-top:12px;padding:12px;border-radius:14px;background:#09162b;border:1px solid #ffffff10}
+.difficulty{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.diffBtn{padding:9px 7px;font-size:11px;letter-spacing:.06em;background:#142647}
+.diffBtn.active{background:linear-gradient(#83cbff,#4f9ee0);color:#06101e;border-color:#b8e5ff;box-shadow:0 0 0 2px #5ab8ff33}
+.difficultyHint{margin-top:8px;color:#91a4cb;font-size:11px;line-height:1.4}
 button{appearance:none;border:1px solid #ffffff18;border-radius:14px;padding:13px 14px;background:linear-gradient(#22365e,#172544);color:#fff;font-weight:950;cursor:pointer;transition:transform .13s,filter .13s,border-color .13s}
 button:hover{filter:brightness(1.12);transform:translateY(-1px)}
 button.primary{background:linear-gradient(#9ad7ff,#64b7f2);color:#06101e;border:0}
@@ -83,6 +88,16 @@ button.orange{background:linear-gradient(#ffd08d,#f5a54d);color:#1c1105;border:0
           <button class="primary" id="botBtn">VS BOT</button>
           <button class="orange" id="localBtn">LOCAL 1V1</button>
         </div>
+        <div class="difficultyBox">
+          <div class="label">Bot difficulty</div>
+          <div class="difficulty" id="difficulty">
+            <button class="diffBtn" data-diff="easy">EASY</button>
+            <button class="diffBtn active" data-diff="normal">NORMAL</button>
+            <button class="diffBtn" data-diff="hard">HARD</button>
+            <button class="diffBtn" data-diff="expert">EXPERT</button>
+          </div>
+          <div class="difficultyHint" id="difficultyHint">Balanced reactions, aim, movement, and short bursts.</div>
+        </div>
 
         <div class="section">
           <div class="label">Choose arena</div>
@@ -113,11 +128,17 @@ button.orange{background:linear-gradient(#ffd08d,#f5a54d);color:#1c1105;border:0
 <script>
 (()=>{
 const C=document.getElementById('game'),G=C.getContext('2d'),W=C.width,H=C.height,$=id=>document.getElementById(id);
-const menu=$('menu'),win=$('win'),banner=$('banner'),winner=$('winner'),s1=$('s1'),s2=$('s2'),timerEl=$('timer'),corner=$('corner'),mapsEl=$('maps');
+const menu=$('menu'),win=$('win'),banner=$('banner'),winner=$('winner'),s1=$('s1'),s2=$('s2'),timerEl=$('timer'),corner=$('corner'),mapsEl=$('maps'),difficultyEl=$('difficulty'),difficultyHint=$('difficultyHint');
 
-const ROT=Math.PI*2/2.7,MOVE=192,BSPD=620,HOLD=.11,TAPLOCK=.055,BOTCD=.28,R=21,BR=5,WIN=3,ROUND_TIME=60,MAX_HP=3;
+const ROT=Math.PI*2/2.7,MOVE=192,BSPD=620,HOLD=.11,TAPLOCK=.055,R=21,BR=5,WIN=3,ROUND_TIME=60,MAX_HP=3;
 const keys={},bullets=[],parts=[];
-let mode='bot',mapI=0,playing=false,paused=false,roundOver=false,sudden=false,roundEndT=0,roundClock=ROUND_TIME,score=[0,0],round=1,last=performance.now(),shake=0;
+let mode='bot',botDifficulty='normal',mapI=0,playing=false,paused=false,roundOver=false,sudden=false,roundEndT=0,roundClock=ROUND_TIME,score=[0,0],round=1,last=performance.now(),shake=0;
+const DIFFICULTIES={
+  easy:{name:'Easy',hint:'Slower reactions, looser aim, single shots, and less reliable dodging.',reaction:[.34,.48],aimNoise:.055,acquire:.035,fireChance:.72,burst:[1,1],cool:.50,think:[.16,.26],dodge:.34,lead:.00,moveChance:.23},
+  normal:{name:'Normal',hint:'Balanced reactions, aim, movement, and short bursts.',reaction:[.20,.30],aimNoise:.025,acquire:.025,fireChance:.88,burst:[1,2],cool:.34,think:[.10,.18],dodge:.55,lead:.72,moveChance:.18},
+  hard:{name:'Hard',hint:'Quick reactions, accurate leading, smarter dodging, and two-to-three shot bursts.',reaction:[.11,.18],aimNoise:.012,acquire:.015,fireChance:.97,burst:[2,3],cool:.24,think:[.065,.12],dodge:.74,lead:.90,moveChance:.14},
+  expert:{name:'Expert',hint:'Very fast reactions, tight aim, strong prediction, and aggressive three-shot bursts.',reaction:[.06,.10],aimNoise:.0045,acquire:.008,fireChance:1,burst:[3,3],cool:.17,think:[.045,.08],dodge:.88,lead:1.00,moveChance:.10}
+};
 
 const rect=(x,y,w,h)=>({x,y,w,h});
 const MAPS=[
@@ -144,7 +165,7 @@ const MAPS=[
 ];
 const SUDDEN={name:'Sudden Death',bg:'#261a22',w:[],sp:[[390,350,0],[810,350,Math.PI]],bounds:{x:300,y:160,w:600,h:380}};
 
-const tank=i=>({id:i,x:0,y:0,a:0,dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.1,delay:0,color:i?'#ffad55':'#68c4ff',accent:i?'#ff774d':'#398cff'});
+const tank=i=>({id:i,x:0,y:0,a:0,dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.1,botReact:0,botBurst:0,botBurstT:0,aimOffset:0,color:i?'#ffad55':'#68c4ff',accent:i?'#ff774d':'#398cff'});
 const T=[tank(0),tank(1)];
 
 function currentArena(){return sudden?SUDDEN:MAPS[mapI]}
@@ -188,15 +209,16 @@ function resetRound(preview=false,asSudden=false){
   bullets.length=0;parts.length=0;roundOver=false;roundEndT=0;sudden=asSudden;roundClock=ROUND_TIME;
   const arena=currentArena();
   arena.sp.forEach((p,i)=>Object.assign(T[i],{
-    x:p[0],y:p[1],a:p[2],dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.12,delay:0
+    x:p[0],y:p[1],a:p[2],dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.12,botReact:0,botBurst:0,botBurstT:0,aimOffset:0
   }));
+  T[1].aimOffset=(Math.random()*2-1)*DIFFICULTIES[botDifficulty].aimNoise;
   Object.keys(keys).forEach(k=>keys[k]=0);
   updateTimer();
   if(!preview)show(sudden?'SUDDEN DEATH':'ROUND '+round,sudden?1100:700);
 }
 function start(m){
   mode=m;score=[0,0];round=1;playing=true;paused=false;menu.classList.add('hidden');win.classList.add('hidden');
-  corner.innerHTML=m==='bot'?'P1: <kbd>X</kbd> move · <kbd>Z</kbd> shoot':'P1 <kbd>X</kbd>/<kbd>Z</kbd> · P2 <kbd>M</kbd>/<kbd>N</kbd>';
+  corner.innerHTML=m==='bot'?'P1: <kbd>X</kbd> move · <kbd>Z</kbd> shoot · BOT: '+DIFFICULTIES[botDifficulty].name.toUpperCase():'P1 <kbd>X</kbd>/<kbd>Z</kbd> · P2 <kbd>M</kbd>/<kbd>N</kbd>';
   updateScore();resetRound(false,false);last=performance.now();
 }
 
@@ -256,22 +278,60 @@ function danger(t){
   return false;
 }
 function botStartMove(t,dur){if(t.moveT<=0)beginMove(t);t.moveT=dur}
+function botTargetAngle(t,q,d){
+  let px=q.x,py=q.y;
+  if(keys.x&&d.lead>0){
+    const dist=Math.hypot(q.x-t.x,q.y-t.y);
+    const avgReaction=(d.reaction[0]+d.reaction[1])*.5;
+    const prediction=Math.min(1.15,dist/BSPD+avgReaction)*d.lead;
+    px+=Math.cos(q.a)*MOVE*prediction;py+=Math.sin(q.a)*MOVE*prediction;
+  }
+  return Math.atan2(py-t.y,px-t.x)+t.aimOffset;
+}
+function startBotAttack(t,d){
+  t.botReact=d.reaction[0]+Math.random()*(d.reaction[1]-d.reaction[0]);
+  const lo=d.burst[0],hi=d.burst[1];t.botBurst=lo+Math.floor(Math.random()*(hi-lo+1));t.botBurstT=0;
+}
 function bot(t,dt){
-  const q=T[0];t.botCd=Math.max(0,t.botCd-dt);
-  if(t.moveT>0){t.moveT-=dt;moveTank(t,dt);return}
-  t.a=(t.a+t.dir*ROT*dt)%(Math.PI*2);
-  const want=Math.atan2(q.y-t.y,q.x-t.x),err=Math.abs(ad(want,t.a)),dist=Math.hypot(q.x-t.x,q.y-t.y);
-  t.think-=dt;
-  if(t.delay>0){
-    t.delay-=dt;
-    if(t.delay<=0&&err<.105&&los(t,q)&&t.botCd<=0){fire(t,true);t.botCd=BOTCD}
+  const q=T[0],d=DIFFICULTIES[botDifficulty];
+  t.botCd=Math.max(0,t.botCd-dt);
+
+  if(t.botReact>0){
+    t.botReact-=dt;
+    if(t.botReact<=0){
+      if(los(t,q)&&t.botBurst>0){fire(t,true);t.botBurst--;t.botBurstT=HOLD}
+      else{t.botBurst=0;t.botCd=d.cool}
+    }
     return;
   }
+  if(t.botBurst>0){
+    t.botBurstT-=dt;
+    if(t.botBurstT<=0){
+      if(los(t,q)){fire(t);t.botBurst--;t.botBurstT+=HOLD}
+      else t.botBurst=0;
+      if(t.botBurst<=0){t.botCd=d.cool;t.aimOffset=(Math.random()*2-1)*d.aimNoise}
+    }
+    return;
+  }
+  if(t.moveT>0){t.moveT-=dt;moveTank(t,dt);return}
+
+  const dist=Math.hypot(q.x-t.x,q.y-t.y),clear=los(t,q);
+  const desired=botTargetAngle(t,q,d),delta=ad(desired,t.a),step=ROT*dt;
+  const crossing=(t.dir>0?delta>=0:delta<=0)&&Math.abs(delta)<=step+d.acquire;
+  t.a=(t.a+t.dir*step)%(Math.PI*2);
+
+  if(clear&&dist<1000&&t.botCd<=0&&crossing){
+    t.a=desired;
+    if(Math.random()<d.fireChance)startBotAttack(t,d);
+    else{t.botCd=.18;t.aimOffset=(Math.random()*2-1)*d.aimNoise}
+    return;
+  }
+
+  t.think-=dt;
   if(t.think<=0){
-    t.think=.07+Math.random()*.14;
-    if(danger(t)){botStartMove(t,.22+Math.random()*.34);return}
-    if(err<.065&&dist<900&&los(t,q)&&t.botCd<=0){t.delay=.045+Math.random()*.08;return}
-    if(Math.random()<.18||!los(t,q)||dist<170)botStartMove(t,.19+Math.random()*.38);
+    t.think=d.think[0]+Math.random()*(d.think[1]-d.think[0]);
+    if(danger(t)&&Math.random()<d.dodge){botStartMove(t,.20+Math.random()*.34);return}
+    if(!clear||dist<165||Math.random()<d.moveChance)botStartMove(t,.18+Math.random()*.36);
   }
 }
 function scorePoint(sc){
@@ -403,6 +463,15 @@ addEventListener('keydown',e=>{
   }
 });
 addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
+
+[...difficultyEl.querySelectorAll('.diffBtn')].forEach(b=>{
+  b.onclick=()=>{
+    botDifficulty=b.dataset.diff;
+    [...difficultyEl.children].forEach(x=>x.classList.toggle('active',x===b));
+    difficultyHint.textContent=DIFFICULTIES[botDifficulty].hint;
+    if(mode==='bot'&&playing)corner.innerHTML='P1: <kbd>X</kbd> move · <kbd>Z</kbd> shoot · BOT: '+DIFFICULTIES[botDifficulty].name.toUpperCase();
+  };
+});
 
 $('botBtn').onclick=()=>start('bot');
 $('localBtn').onclick=()=>start('local');
