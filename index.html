@@ -136,8 +136,8 @@ let mode='bot',botDifficulty='normal',mapI=0,playing=false,paused=false,roundOve
 const DIFFICULTIES={
   easy:{name:'Easy',hint:'Slower reactions, looser aim, single shots, and less reliable dodging.',reaction:[.34,.48],aimNoise:.055,acquire:.035,fireChance:.72,burst:[1,1],cool:.50,think:[.16,.26],dodge:.34,lead:.00,moveChance:.23,spinReset:0,resetMove:[.12,.18]},
   normal:{name:'Normal',hint:'Balanced reactions, aim, movement, and short bursts.',reaction:[.20,.30],aimNoise:.025,acquire:.025,fireChance:.88,burst:[1,2],cool:.34,think:[.10,.18],dodge:.55,lead:.72,moveChance:.18,spinReset:.12,resetMove:[.10,.16]},
-  hard:{name:'Hard',hint:'Fast reactions, near-exact leading, aggressive bursts, strong dodging, and tactical spin resets after shots.',reaction:[.07,.115],aimNoise:.0045,acquire:.030,fireChance:1,burst:[2,4],cool:.065,think:[.035,.07],dodge:.91,lead:.98,moveChance:.12,spinReset:.68,resetMove:[.07,.12]},
-  expert:{name:'Expert',hint:'Elite prediction and reactions. It dodges aggressively and uses short movement taps to reverse its spin and attack again quickly.',reaction:[.022,.045],aimNoise:.0009,acquire:.050,fireChance:1,burst:[3,5],cool:.012,think:[.014,.032],dodge:.995,lead:1.00,moveChance:.075,spinReset:1,resetMove:[.055,.09]}
+  hard:{name:'Hard',hint:'Fast reactions plus tactical positioning, safer movement, cover use, and aggressive firing lanes.',reaction:[.07,.115],aimNoise:.0045,acquire:.030,fireChance:1,burst:[2,4],cool:.065,think:[.035,.07],dodge:.91,lead:.98,moveChance:.12,spinReset:.68,resetMove:[.07,.12]},
+  expert:{name:'Expert',hint:'Strategic AI: cover, peeks, flanks, retreats, surprise angles, survival play, and elite predictive aim.',reaction:[.022,.045],aimNoise:.0009,acquire:.050,fireChance:1,burst:[3,5],cool:.012,think:[.014,.032],dodge:.995,lead:1.00,moveChance:.075,spinReset:1,resetMove:[.055,.09]}
 };
 
 const rect=(x,y,w,h)=>({x,y,w,h});
@@ -165,7 +165,7 @@ const MAPS=[
 ];
 const SUDDEN={name:'Sudden Death',bg:'#261a22',w:[],sp:[[390,350,0],[810,350,Math.PI]],bounds:{x:300,y:160,w:600,h:380}};
 
-const tank=i=>({id:i,x:0,y:0,a:0,dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.1,botReact:0,botBurst:0,botBurstT:0,aimOffset:0,color:i?'#ffad55':'#68c4ff',accent:i?'#ff774d':'#398cff'});
+const tank=i=>({id:i,x:0,y:0,a:0,dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.1,botReact:0,botBurst:0,botBurstT:0,aimOffset:0,botState:'hunt',planX:0,planY:0,planT:0,coverBias:0,color:i?'#ffad55':'#68c4ff',accent:i?'#ff774d':'#398cff'});
 const T=[tank(0),tank(1)];
 
 function currentArena(){return sudden?SUDDEN:MAPS[mapI]}
@@ -209,7 +209,7 @@ function resetRound(preview=false,asSudden=false){
   bullets.length=0;parts.length=0;roundOver=false;roundEndT=0;sudden=asSudden;roundClock=ROUND_TIME;
   const arena=currentArena();
   arena.sp.forEach((p,i)=>Object.assign(T[i],{
-    x:p[0],y:p[1],a:p[2],dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.12,botReact:0,botBurst:0,botBurstT:0,aimOffset:0
+    x:p[0],y:p[1],a:p[2],dir:i?-1:1,alive:true,hp:MAX_HP,lock:0,hold:HOLD,flash:0,inv:0,botCd:0,moveT:0,think:.12,botReact:0,botBurst:0,botBurstT:0,aimOffset:0,botState:'hunt',planX:p[0],planY:p[1],planT:0,coverBias:0
   }));
   T[1].aimOffset=(Math.random()*2-1)*DIFFICULTIES[botDifficulty].aimNoise;
   Object.keys(keys).forEach(k=>keys[k]=0);
@@ -236,9 +236,10 @@ function blocked(x,y,t){
   const q=T[1-t.id];return q.alive&&d2(x,y,q.x,q.y)<(R*2+4)**2;
 }
 function moveTank(t,dt){
-  const nx=t.x+Math.cos(t.a)*MOVE*dt,ny=t.y+Math.sin(t.a)*MOVE*dt;
+  const ox=t.x,oy=t.y,nx=t.x+Math.cos(t.a)*MOVE*dt,ny=t.y+Math.sin(t.a)*MOVE*dt;
   if(!blocked(nx,t.y,t))t.x=nx;
   if(!blocked(t.x,ny,t))t.y=ny;
+  return Math.hypot(t.x-ox,t.y-oy);
 }
 function beginMove(t){t.dir*=-1}
 function burst(x,y,c,n=8,s=100){
@@ -272,12 +273,106 @@ function los(a,b){
 function danger(t){
   for(const b of bullets){
     if(b.owner===t.id)continue;
-    const rx=t.x-b.x,ry=t.y-b.y,v2=b.vx*b.vx+b.vy*b.vy,q=Math.max(0,Math.min(.5,(rx*b.vx+ry*b.vy)/v2)),x=b.x+b.vx*q,y=b.y+b.vy*q;
-    if(d2(x,y,t.x,t.y)<52*52)return true;
+    const rx=t.x-b.x,ry=t.y-b.y,v2=b.vx*b.vx+b.vy*b.vy,q=Math.max(0,Math.min(.65,(rx*b.vx+ry*b.vy)/v2)),x=b.x+b.vx*q,y=b.y+b.vy*q;
+    if(d2(x,y,t.x,t.y)<58*58)return true;
   }
   return false;
 }
-function botStartMove(t,dur){if(t.moveT<=0)beginMove(t);t.moveT=dur}
+function worldBlocked(x,y,t,includeEnemy=true){
+  const b=bounds();
+  if(x<b.x+R+8||x>b.x+b.w-R-8||y<b.y+R+8||y>b.y+b.h-R-8)return true;
+  for(const o of currentArena().w)if(circleRect(x,y,R,o))return true;
+  if(includeEnemy){const q=T[1-t.id];if(q.alive&&d2(x,y,q.x,q.y)<(R*2+10)**2)return true}
+  return false;
+}
+function pathClearance(t,a,maxDist=320){
+  const step=12,c=Math.cos(a),sn=Math.sin(a);
+  for(let d=step;d<=maxDist;d+=step)if(worldBlocked(t.x+c*d,t.y+sn*d,t,true))return d-step;
+  return maxDist;
+}
+function losXY(x1,y1,x2,y2){
+  const dx=x2-x1,dy=y2-y1,n=Math.ceil(Math.hypot(dx,dy)/16);
+  for(let i=1;i<n;i++){
+    const x=x1+dx*i/n,y=y1+dy*i/n;
+    for(const o of currentArena().w)if(x>o.x&&x<o.x+o.w&&y>o.y&&y<o.y+o.h)return false;
+  }
+  return true;
+}
+function coverDistance(x,y){
+  let best=999;
+  for(const o of currentArena().w){
+    const dx=Math.max(o.x-x,0,x-(o.x+o.w)),dy=Math.max(o.y-y,0,y-(o.y+o.h));
+    best=Math.min(best,Math.hypot(dx,dy));
+  }
+  const b=bounds();best=Math.min(best,x-b.x,b.x+b.w-x,y-b.y,b.y+b.h-y);
+  return best;
+}
+function escapeRoutes(x,y,t){
+  let open=0;
+  for(let i=0;i<8;i++){
+    const a=i*Math.PI/4,px=x+Math.cos(a)*82,py=y+Math.sin(a)*82;
+    if(!worldBlocked(px,py,t,false))open++;
+  }
+  return open/8;
+}
+function playerThreatAt(q,x,y){
+  const aim=Math.atan2(y-q.y,x-q.x),diff=Math.abs(ad(aim,q.a)),dist=Math.hypot(x-q.x,y-q.y);
+  const facing=Math.max(0,1-diff/.58),range=Math.max(.22,1-dist/1300);
+  return facing*range*(keys.z?1.22:1);
+}
+function botStartMoveSafe(t,dur){
+  const need=MOVE*dur+14,clear=pathClearance(t,t.a,need);
+  if(clear<22)return false;
+  dur=Math.min(dur,Math.max(.055,(clear-10)/MOVE));
+  if(t.moveT<=0)beginMove(t);
+  t.moveT=dur;t.planT=0;
+  return true;
+}
+function chooseBotPlan(t,q,d){
+  const tactical=botDifficulty==='hard'||botDifficulty==='expert';
+  if(!tactical){t.botState='hunt';t.planT=.16;return}
+  const expert=botDifficulty==='expert',distNow=Math.hypot(q.x-t.x,q.y-t.y),hiddenNow=!los(t,q);
+  const lowHP=t.hp===1,late=!sudden&&roundClock<20,critical=!sudden&&roundClock<12;
+  const threatNow=playerThreatAt(q,t.x,t.y);
+  let state='position';
+  if(t.coverBias>0)state='cover';
+  else if(lowHP&&late)state='survive';
+  else if(danger(t)||distNow<185||(threatNow>.72&&t.hp<=q.hp))state='retreat';
+  else if(hiddenNow)state='peek';
+  else if(q.hp===1&&threatNow<.45)state='pressure';
+  else if(threatNow<.20&&distNow>280)state='pressure';
+
+  if(state==='survive'&&hiddenNow&&coverDistance(t.x,t.y)<125&&distNow>210){
+    t.botState='stall';t.planX=t.x;t.planY=t.y;t.planT=expert?.10:.16;return;
+  }
+
+  const angles=expert?36:24,dists=expert?[55,90,135,190,255,320]:[60,110,170,235,295];
+  let best=null,bestScore=-1e9;
+  const toPlayer=Math.atan2(q.y-t.y,q.x-t.x);
+  for(let i=0;i<angles;i++){
+    const a=i*Math.PI*2/angles,clear=pathClearance(t,a,Math.max(...dists)+10);
+    for(const md of dists){
+      if(clear<md)continue;
+      const x=t.x+Math.cos(a)*md,y=t.y+Math.sin(a)*md,dp=Math.hypot(q.x-x,q.y-y);
+      if(dp<R*3)continue;
+      const visible=losXY(x,y,q.x,q.y),covered=visible?0:1,near=Math.max(0,1-coverDistance(x,y)/125);
+      const threat=playerThreatAt(q,x,y),escape=escapeRoutes(x,y,t),rangeFit=Math.max(0,1-Math.abs(dp-360)/360);
+      const lateral=Math.abs(Math.sin(a-toPlayer));
+      let score=-md*.003+escape*1.5-threat*3+Math.random()*.08;
+      if(state==='survive')score+=covered*11+near*2.8+Math.min(dp,700)*.010-threat*6+(critical?covered*5:0)+escape*2;
+      else if(state==='cover')score+=covered*9+near*3+Math.min(dp,650)*.004-threat*5+escape*2;
+      else if(state==='retreat')score+=(dp-distNow)*.022+covered*5.5+near*1.5-threat*5.5+escape*2.3;
+      else if(state==='peek')score+=visible*7+near*4+lateral*2.2+rangeFit*2.5-threat*4+(visible&&hiddenNow?2.5:0)+(visible?0:1.0);
+      else if(state==='pressure')score+=visible*7+rangeFit*3.5+(1-threat)*2.5+near*1.1-(dp>620?2:0);
+      else score+=visible*4.5+near*2.1+rangeFit*3+escape*1.7-threat*3.8+lateral*.8;
+      if(escape<.26&&!(state==='survive'&&covered))score-=4;
+      if(score>bestScore){bestScore=score;best={x,y,state}}
+    }
+  }
+  if(best){t.planX=best.x;t.planY=best.y;t.botState=best.state}
+  else{t.planX=t.x;t.planY=t.y;t.botState='hold'}
+  t.planT=expert?.095:.15;
+}
 function botTargetAngle(t,q,d){
   let px=q.x,py=q.y;
   if(keys.x&&d.lead>0){
@@ -289,8 +384,7 @@ function botTargetAngle(t,q,d){
     let flight=Math.hypot(rx,ry)/BSPD;
     const disc=B*B-4*A*C;
     if(disc>=0&&Math.abs(A)>1e-6){
-      const root=Math.sqrt(disc),t1=(-B-root)/(2*A),t2=(-B+root)/(2*A);
-      const valid=[t1,t2].filter(v=>v>0);
+      const root=Math.sqrt(disc),t1=(-B-root)/(2*A),t2=(-B+root)/(2*A),valid=[t1,t2].filter(v=>v>0);
       if(valid.length)flight=Math.min(...valid);
     }
     const total=(reaction+Math.min(1.7,flight))*d.lead;
@@ -303,56 +397,75 @@ function startBotAttack(t,d){
   const lo=d.burst[0],hi=d.burst[1];t.botBurst=lo+Math.floor(Math.random()*(hi-lo+1));t.botBurstT=0;
 }
 function bot(t,dt){
-  const q=T[0],d=DIFFICULTIES[botDifficulty];
-  t.botCd=Math.max(0,t.botCd-dt);
+  const q=T[0],d=DIFFICULTIES[botDifficulty],tactical=botDifficulty==='hard'||botDifficulty==='expert';
+  t.botCd=Math.max(0,t.botCd-dt);t.coverBias=Math.max(0,t.coverBias-dt);t.planT-=dt;
 
   if(t.botReact>0){
     t.botReact-=dt;
     if(t.botReact<=0){
       if(los(t,q)&&t.botBurst>0){fire(t,true);t.botBurst--;t.botBurstT=HOLD}
-      else{t.botBurst=0;t.botCd=d.cool}
+      else{t.botBurst=0;t.botCd=d.cool;t.planT=0}
     }
     return;
   }
   if(t.botBurst>0){
     t.botBurstT-=dt;
     if(t.botBurstT<=0){
-      if(los(t,q)){fire(t);t.botBurst--;t.botBurstT+=HOLD}
-      else t.botBurst=0;
+      if(los(t,q)){fire(t);t.botBurst--;t.botBurstT+=HOLD}else t.botBurst=0;
       if(t.botBurst<=0){
-        t.botCd=d.cool;t.aimOffset=(Math.random()*2-1)*d.aimNoise;
-        if(Math.random()<d.spinReset){
+        t.botCd=d.cool;t.aimOffset=(Math.random()*2-1)*d.aimNoise;t.planT=0;
+        if(tactical&&t.botState==='peek')t.coverBias=botDifficulty==='expert'?.75:.48;
+        else if(Math.random()<d.spinReset){
           const dur=d.resetMove[0]+Math.random()*(d.resetMove[1]-d.resetMove[0]);
-          botStartMove(t,dur);
+          botStartMoveSafe(t,dur);
         }
       }
     }
     return;
   }
-  if(t.moveT>0){t.moveT-=dt;moveTank(t,dt);return}
-
-  const dist=Math.hypot(q.x-t.x,q.y-t.y),clear=los(t,q);
-  const desired=botTargetAngle(t,q,d),delta=ad(desired,t.a),step=ROT*dt;
-  const crossing=(t.dir>0?delta>=0:delta<=0)&&Math.abs(delta)<=step+d.acquire;
-  t.a=(t.a+t.dir*step)%(Math.PI*2);
-
-  if(clear&&dist<1000&&t.botCd<=0&&crossing){
-    t.a=desired;
-    if(Math.random()<d.fireChance)startBotAttack(t,d);
-    else{t.botCd=.18;t.aimOffset=(Math.random()*2-1)*d.aimNoise}
+  if(t.moveT>0){
+    const look=Math.max(26,MOVE*dt*3);
+    if(pathClearance(t,t.a,look)<16){t.moveT=0;t.planT=0;return}
+    const moved=moveTank(t,dt);t.moveT-=dt;
+    if(moved<MOVE*dt*.25){t.moveT=0;t.planT=0}
     return;
   }
 
-  t.think-=dt;
-  if(t.think<=0){
-    t.think=d.think[0]+Math.random()*(d.think[1]-d.think[0]);
-    if(danger(t)&&Math.random()<d.dodge){
-      const fast=botDifficulty==='expert'||botDifficulty==='hard';
-      botStartMove(t,fast?.12+Math.random()*.24:.20+Math.random()*.34);return;
-    }
-    if(!clear||dist<190||Math.random()<d.moveChance){
-      const fast=botDifficulty==='expert'||botDifficulty==='hard';
-      botStartMove(t,fast?.10+Math.random()*.26:.18+Math.random()*.36);
+  if(tactical&&danger(t)&&pathClearance(t,t.a,70)>34){
+    if(botStartMoveSafe(t,botDifficulty==='expert'?.18:.14))return;
+  }
+
+  if(tactical&&t.planT<=0)chooseBotPlan(t,q,d);
+
+  const dist=Math.hypot(q.x-t.x,q.y-t.y),clear=los(t,q),desired=botTargetAngle(t,q,d),step=ROT*dt;
+  const shotDelta=ad(desired,t.a),shotCross=(t.dir>0?shotDelta>=0:shotDelta<=0)&&Math.abs(shotDelta)<=step+d.acquire;
+
+  let moveCross=false,moveAngle=t.a,planDist=0;
+  if(tactical&&t.botState!=='stall'&&t.botState!=='hold'){
+    moveAngle=Math.atan2(t.planY-t.y,t.planX-t.x);planDist=Math.hypot(t.planX-t.x,t.planY-t.y);
+    const md=ad(moveAngle,t.a);moveCross=(t.dir>0?md>=0:md<=0)&&Math.abs(md)<=step+(botDifficulty==='expert'?.045:.032);
+  }
+
+  const movePriority=t.botState==='survive'||t.botState==='cover'||t.botState==='retreat';
+  if(movePriority&&moveCross&&planDist>24){
+    t.a=moveAngle;if(botStartMoveSafe(t,Math.min(.95,planDist/MOVE)))return;t.planT=0;
+  }
+
+  t.a=(t.a+t.dir*step)%(Math.PI*2);
+  if(clear&&dist<1030&&t.botCd<=0&&shotCross){
+    t.a=desired;if(Math.random()<d.fireChance)startBotAttack(t,d);else{t.botCd=.18;t.aimOffset=(Math.random()*2-1)*d.aimNoise}return;
+  }
+
+  if(!movePriority&&moveCross&&planDist>24){
+    t.a=moveAngle;if(botStartMoveSafe(t,Math.min(.9,planDist/MOVE)))return;t.planT=0;
+  }
+
+  if(!tactical){
+    t.think-=dt;
+    if(t.think<=0){
+      t.think=d.think[0]+Math.random()*(d.think[1]-d.think[0]);
+      if(danger(t)&&Math.random()<d.dodge&&pathClearance(t,t.a,85)>35){botStartMoveSafe(t,.20+Math.random()*.30);return}
+      if((!clear||dist<165||Math.random()<d.moveChance)&&pathClearance(t,t.a,85)>34)botStartMoveSafe(t,.18+Math.random()*.32);
     }
   }
 }
