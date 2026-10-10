@@ -134,10 +134,10 @@ const ROT=Math.PI*2/2.7,MOVE=192,BSPD=620,HOLD=.11,TAPLOCK=.055,R=21,BR=5,WIN=3,
 const keys={},bullets=[],parts=[];
 let mode='bot',botDifficulty='normal',mapI=0,playing=false,paused=false,roundOver=false,sudden=false,roundEndT=0,roundClock=ROUND_TIME,score=[0,0],round=1,last=performance.now(),shake=0;
 const DIFFICULTIES={
-  easy:{name:'Easy',hint:'Slower reactions, looser aim, single shots, and less reliable dodging.',reaction:[.34,.48],aimNoise:.055,acquire:.035,fireChance:.72,burst:[1,1],cool:.50,think:[.16,.26],dodge:.34,lead:.00,moveChance:.23},
-  normal:{name:'Normal',hint:'Balanced reactions, aim, movement, and short bursts.',reaction:[.20,.30],aimNoise:.025,acquire:.025,fireChance:.88,burst:[1,2],cool:.34,think:[.10,.18],dodge:.55,lead:.72,moveChance:.18},
-  hard:{name:'Hard',hint:'Quick reactions, accurate leading, smarter dodging, and two-to-three shot bursts.',reaction:[.11,.18],aimNoise:.012,acquire:.015,fireChance:.97,burst:[2,3],cool:.24,think:[.065,.12],dodge:.74,lead:.90,moveChance:.14},
-  expert:{name:'Expert',hint:'Very fast reactions, tight aim, strong prediction, and aggressive three-shot bursts.',reaction:[.06,.10],aimNoise:.0045,acquire:.008,fireChance:1,burst:[3,3],cool:.17,think:[.045,.08],dodge:.88,lead:1.00,moveChance:.10}
+  easy:{name:'Easy',hint:'Slower reactions, looser aim, single shots, and less reliable dodging.',reaction:[.34,.48],aimNoise:.055,acquire:.035,fireChance:.72,burst:[1,1],cool:.50,think:[.16,.26],dodge:.34,lead:.00,moveChance:.23,spinReset:0,resetMove:[.12,.18]},
+  normal:{name:'Normal',hint:'Balanced reactions, aim, movement, and short bursts.',reaction:[.20,.30],aimNoise:.025,acquire:.025,fireChance:.88,burst:[1,2],cool:.34,think:[.10,.18],dodge:.55,lead:.72,moveChance:.18,spinReset:.12,resetMove:[.10,.16]},
+  hard:{name:'Hard',hint:'Fast reactions, near-exact leading, aggressive bursts, strong dodging, and tactical spin resets after shots.',reaction:[.07,.115],aimNoise:.0045,acquire:.030,fireChance:1,burst:[2,4],cool:.065,think:[.035,.07],dodge:.91,lead:.98,moveChance:.12,spinReset:.68,resetMove:[.07,.12]},
+  expert:{name:'Expert',hint:'Elite prediction and reactions. It dodges aggressively and uses short movement taps to reverse its spin and attack again quickly.',reaction:[.022,.045],aimNoise:.0009,acquire:.050,fireChance:1,burst:[3,5],cool:.012,think:[.014,.032],dodge:.995,lead:1.00,moveChance:.075,spinReset:1,resetMove:[.055,.09]}
 };
 
 const rect=(x,y,w,h)=>({x,y,w,h});
@@ -281,10 +281,20 @@ function botStartMove(t,dur){if(t.moveT<=0)beginMove(t);t.moveT=dur}
 function botTargetAngle(t,q,d){
   let px=q.x,py=q.y;
   if(keys.x&&d.lead>0){
-    const dist=Math.hypot(q.x-t.x,q.y-t.y);
-    const avgReaction=(d.reaction[0]+d.reaction[1])*.5;
-    const prediction=Math.min(1.15,dist/BSPD+avgReaction)*d.lead;
-    px+=Math.cos(q.a)*MOVE*prediction;py+=Math.sin(q.a)*MOVE*prediction;
+    const vx=Math.cos(q.a)*MOVE,vy=Math.sin(q.a)*MOVE;
+    const reaction=(d.reaction[0]+d.reaction[1])*.5;
+    const sx=q.x+vx*reaction,sy=q.y+vy*reaction;
+    const rx=sx-t.x,ry=sy-t.y;
+    const A=vx*vx+vy*vy-BSPD*BSPD,B=2*(rx*vx+ry*vy),C=rx*rx+ry*ry;
+    let flight=Math.hypot(rx,ry)/BSPD;
+    const disc=B*B-4*A*C;
+    if(disc>=0&&Math.abs(A)>1e-6){
+      const root=Math.sqrt(disc),t1=(-B-root)/(2*A),t2=(-B+root)/(2*A);
+      const valid=[t1,t2].filter(v=>v>0);
+      if(valid.length)flight=Math.min(...valid);
+    }
+    const total=(reaction+Math.min(1.7,flight))*d.lead;
+    px=q.x+vx*total;py=q.y+vy*total;
   }
   return Math.atan2(py-t.y,px-t.x)+t.aimOffset;
 }
@@ -309,7 +319,13 @@ function bot(t,dt){
     if(t.botBurstT<=0){
       if(los(t,q)){fire(t);t.botBurst--;t.botBurstT+=HOLD}
       else t.botBurst=0;
-      if(t.botBurst<=0){t.botCd=d.cool;t.aimOffset=(Math.random()*2-1)*d.aimNoise}
+      if(t.botBurst<=0){
+        t.botCd=d.cool;t.aimOffset=(Math.random()*2-1)*d.aimNoise;
+        if(Math.random()<d.spinReset){
+          const dur=d.resetMove[0]+Math.random()*(d.resetMove[1]-d.resetMove[0]);
+          botStartMove(t,dur);
+        }
+      }
     }
     return;
   }
@@ -330,8 +346,14 @@ function bot(t,dt){
   t.think-=dt;
   if(t.think<=0){
     t.think=d.think[0]+Math.random()*(d.think[1]-d.think[0]);
-    if(danger(t)&&Math.random()<d.dodge){botStartMove(t,.20+Math.random()*.34);return}
-    if(!clear||dist<165||Math.random()<d.moveChance)botStartMove(t,.18+Math.random()*.36);
+    if(danger(t)&&Math.random()<d.dodge){
+      const fast=botDifficulty==='expert'||botDifficulty==='hard';
+      botStartMove(t,fast?.12+Math.random()*.24:.20+Math.random()*.34);return;
+    }
+    if(!clear||dist<190||Math.random()<d.moveChance){
+      const fast=botDifficulty==='expert'||botDifficulty==='hard';
+      botStartMove(t,fast?.10+Math.random()*.26:.18+Math.random()*.36);
+    }
   }
 }
 function scorePoint(sc){
